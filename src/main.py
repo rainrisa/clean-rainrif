@@ -1,11 +1,15 @@
 from typing import Dict
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message, BotCommand
-from pyrogram.enums import ChatType
+from pytgcalls.types.input_stream import InputStream, InputAudioStream
+from pyrogram.enums import ChatType, ChatMemberStatus
+from pytgcalls import PyTgCalls
 from dotenv import load_dotenv
 from asyncio import get_event_loop
 from os import getenv
 from astaroth_game import AstarothGame
+from tag import Tag
+from functions.get_payload import get_payload
 from graveyard_config import graveyard_config
 from time import time
 import re
@@ -13,19 +17,72 @@ import math
 
 load_dotenv()
 
-api_id = int(getenv('API_ID') or "")
-api_hash = getenv('API_HASH')
-string_session = getenv('STRING_SESSION')
-bot_token = getenv('BOT_TOKEN')
+api_id = int(getenv("API_ID"))
+api_hash = getenv("API_HASH")
+string_session = getenv("STRING_SESSION")
+bot_token = getenv("BOT_TOKEN")
 user_account = Client("graveyard_user", api_id=api_id, api_hash=api_hash, session_string=string_session)
 bot_account = Client("graveyard_bot", api_id=api_id, api_hash=api_hash, bot_token=bot_token)
+call_account = PyTgCalls(user_account)
 loop = get_event_loop()
-astaroth_id = int(getenv('ASTAROTH_ID') or "")
-live_channel_id = int(getenv('LIVE_CHANNEL_ID') or "")
-discussion_id = int(getenv('DISCUSSION_ID') or "")
+astaroth_id = int(getenv("ASTAROTH_ID"))
+live_channel_id = int(getenv("LIVE_CHANNEL_ID"))
+discussion_id = int(getenv("DISCUSSION_ID"))
 astaroth_game: Dict[int, AstarothGame] = {}
-graveyard_config.sudo_users = list(map(int, (getenv('SUDO_USERS') or "").split()))
+tags: Dict[int, Tag] = {}
+graveyard_config.sudo_users = list(map(int, getenv("SUDO_USERS").split()))
 start_time = time()
+
+@user_account.on_message(filters.group & filters.command(["all", "tag"], ["."]))
+async def tag_handler(_, message: Message):
+  chat_id = message.chat.id
+
+  try:
+    if message.from_user.is_bot: return
+    user_id = message.from_user.id
+    user = await user_account.get_chat_member(chat_id, user_id)
+
+    if user.status != ChatMemberStatus.ADMINISTRATOR:
+      if user_id not in graveyard_config.sudo_users: return
+
+    if chat_id in tags: del tags[chat_id]
+
+    tag_message = get_payload(message.text)
+    tags[chat_id] = Tag(user_account, tag_message, chat_id)
+
+    try: await user_account.delete_messages(message.chat.id, message.id)
+    except: pass
+    
+    await tags[chat_id].get_all_users()
+    await tags[chat_id].tag_all_users()
+  except Exception as err:
+    print(err)
+    return
+
+@user_account.on_message(filters.command("q", [".", "/", "#"]))
+async def delete_tag_handler(_, message):
+  chat_id = message.chat.id
+
+  if chat_id in tags:
+    tags[chat_id].cancel = True
+    await user_account.delete_messages(chat_id, message.id)
+    await tags[chat_id].delete_all_tag_messages()
+    del tags[chat_id]
+
+@user_account.on_message(filters.group & filters.command("qq", ["/"]) & filters.me)
+async def join_call_handler(_, message: Message):
+  chat_id = message.chat.id
+  await user_account.delete_messages(chat_id, message.id)
+  try: await call_account.join_group_call(
+    chat_id, InputStream(InputAudioStream("src/audio.raw")))
+  except: pass
+
+@user_account.on_message(filters.group & filters.command("qqq", ["/"]) & filters.me)
+async def leave_call_handler(_, message: Message):
+  chat_id = message.chat.id
+  await user_account.delete_messages(chat_id, message.id)
+  try: await call_account.leave_group_call(chat_id)
+  except: pass
 
 @user_account.on_message(filters.text & filters.bot)
 async def regular_message_handler(_, message: Message):
@@ -153,6 +210,7 @@ async def init():
     BotCommand("changetitle", "mengganti live title"),
     BotCommand("uptime", "lihat sudah berapa lama botnya jalan"),
   ])
+  await call_account.start()
   await idle()
 
 loop.run_until_complete(init())

@@ -15,7 +15,7 @@ class GraveyardConfig():
     self.success_sticker = self.graveyard.get('success_sticker')
     self.fail_sticker = self.graveyard.get('fail_sticker')
     self.astaroth_live_title = self.graveyard.get('astaroth_live_title')
-    self.sudo_users = []
+    self.sudo_users = eval(self.graveyard.get('sudo_users'))
 
   async def enable_live(self, message: Message):
     if message.from_user.id in self.sudo_users:
